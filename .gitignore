@@ -1,0 +1,3 @@
+platform/
+platform_*.deb
+docker-compose.override*.yml

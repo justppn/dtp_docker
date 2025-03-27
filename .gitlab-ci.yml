@@ -1,0 +1,65 @@
+include:
+  - project: iaac/pipeline-templates/scripts/kaniko
+    file: kaniko-build-scripts.gitlab-ci.yml
+    ref: 1.0.1
+
+stages:
+  - build
+  - deploy
+
+.build_rules:
+  - if: $CI_COMMIT_TAG
+    when: always
+  - when: never
+
+.deploy_rules:
+  - if: $CI_COMMIT_TAG
+    when: manual
+  - when: never
+
+build:
+  # stage build объявлен в .kaniko-build-scripts
+  extends: .kaniko-build-scripts
+  variables:
+    KANIKO_IMAGE_TAG: $CI_COMMIT_TAG # KANIKO_IMAGE_TAG объявлена в .kaniko-build-scripts
+  rules: !reference [.build_rules]
+  tags:
+    - runner01
+
+.deploy:
+  stage: deploy
+  image: alpine:3.16.1
+  before_script:
+    - echo "https://mirror.yandex.ru/mirrors/alpine/v3.16/main/" > /etc/apk/repositories
+    - echo "https://mirror.yandex.ru/mirrors/alpine/v3.16/community/" >> /etc/apk/repositories
+    - apk --update add --quiet --no-cache openssh-client
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | ssh-add -
+    - ssh -o StrictHostKeyChecking=no $USER@$HOST "echo "$CI_JOB_TOKEN" | docker login $CI_REGISTRY -u $CI_REGISTRY_USER --password-stdin"
+  script:
+    - ssh -o StrictHostKeyChecking=no $USER@$HOST "cd $PROJECT_PATH/ && sed -i '/IMAGE_DTP_DOCKER_REPO/cIMAGE_DTP_DOCKER_REPO=$IMAGE_DTP_DOCKER_REPO' .env && sed -i '/IMAGE_DTP_DOCKER_TAG/cIMAGE_DTP_DOCKER_TAG=$IMAGE_DTP_DOCKER_TAG' .env";
+    - scp -o StrictHostKeyChecking=no $DOCKER_COMPOSE_FILE $USER@$HOST:$PROJECT_PATH/$DOCKER_COMPOSE_FILE
+    - ssh -o StrictHostKeyChecking=no $USER@$HOST "cd $PROJECT_PATH/ && docker compose -f $DOCKER_COMPOSE_FILE up -d"
+    - ssh -o StrictHostKeyChecking=no $USER@$HOST "docker logout $CI_REGISTRY"
+  tags:
+    - runner01
+
+deploy:dtp01:
+  rules: !reference [.deploy_rules]
+  extends:
+    - .deploy
+  variables:
+    USER: platform
+    HOST: platform01.absgroup.ru
+    PROJECT_PATH: ~/dtp01
+    DOCKER_COMPOSE_FILE: docker-compose.dtp01.yml
+
+deploy:dtp02:
+  rules: !reference [.deploy_rules]
+  extends:
+    - .deploy
+  variables:
+    USER: platform
+    HOST: platform01.absgroup.ru
+    PROJECT_PATH: ~/dtp02
+    DOCKER_COMPOSE_FILE: docker-compose.dtp02.yml
